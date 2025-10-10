@@ -38,6 +38,18 @@ type NonInclusionProof struct {
 	RightData  []byte       // The actual username data for the right neighbor
 }
 
+// NewEmpty creates and returns a new, empty MerkleTree.
+func NewEmpty() *MerkleTree {
+	return &MerkleTree{
+		data: make([][]byte, 0),
+	}
+}
+
+// Data returns a copy of the data elements in the tree.
+func (t *MerkleTree) Data() [][]byte {
+	return t.data
+}
+
 // CalculateHash computes SHA-256 hex string of data.
 func CalculateHash(data []byte) string {
 	hash := sha256.Sum256(data)
