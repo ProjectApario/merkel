@@ -1,10 +1,12 @@
 package tree
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"runtime"
+	"sort"
 	"sync"
 )
 
@@ -27,6 +29,15 @@ type MerkleProof struct {
 	IsLeft   []bool // true if sibling is left
 }
 
+// NonInclusionProof proves that a given piece of data does not exist
+// in the tree by providing the proofs of its two closest sorted neighbors.
+type NonInclusionProof struct {
+	LeftProof  *MerkleProof // Proof of the username to the left
+	RightProof *MerkleProof // Proof of the username to the right
+	LeftData   []byte       // The actual username data for the left neighbor
+	RightData  []byte       // The actual username data for the right neighbor
+}
+
 // CalculateHash computes SHA-256 hex string of data.
 func CalculateHash(data []byte) string {
 	hash := sha256.Sum256(data)
@@ -38,6 +49,10 @@ func Build(data [][]byte, parallel bool) (*MerkleTree, error) {
 	if len(data) == 0 {
 		return nil, errors.New("no data provided")
 	}
+
+	sort.Slice(data, func(i, j int) bool {
+		return bytes.Compare(data[i], data[j]) < 0
+	})
 
 	// Build leaves
 	leaves := make([]*MerkleNode, len(data))
@@ -119,10 +134,23 @@ func buildLevels(nodes []*MerkleNode, parallel bool) *MerkleNode {
 	return nodes[0]
 }
 
-// Append adds new data and rebuilds the tree (concurrently if parallel=true).
 func (t *MerkleTree) Append(newData []byte, parallel bool) error {
-	t.data = append(t.data, newData)
-	newRoot := buildLevels(t.leaves(), parallel) // Rebuild from updated leaves
+	// Find the correct index to insert the new data to maintain sort order
+	index := sort.Search(len(t.data), func(i int) bool {
+		// Find the first element that is >= newData
+		return bytes.Compare(t.data[i], newData) >= 0
+	})
+
+	// Check if the username already exists at that index
+	if index < len(t.data) && bytes.Equal(t.data[index], newData) {
+		return errors.New("username already exists")
+	}
+
+	// Insert the new data at the correct index to maintain the sorted slice
+	t.data = append(t.data[:index], append([][]byte{newData}, t.data[index:]...)...)
+
+	// Rebuild the tree with the new, sorted data
+	newRoot := buildLevels(t.leaves(), parallel)
 	t.Root = newRoot
 	return nil
 }
@@ -247,4 +275,92 @@ func printTree(node *MerkleNode, indent string) {
 			printTree(node.Right, indent+"  ")
 		}
 	}
+}
+
+// GenerateNonInclusionProof creates a proof that the given username does not exist in the tree.
+// It does this by finding the username's would-be neighbors in the sorted list of data
+// and generating standard inclusion proofs for them.
+func (t *MerkleTree) GenerateNonInclusionProof(username []byte) (*NonInclusionProof, error) {
+	// Find the index where the username would be inserted to maintain order.
+	index := sort.Search(len(t.data), func(i int) bool {
+		return bytes.Compare(t.data[i], username) >= 0
+	})
+
+	// If the item exists, we cannot generate a non-inclusion proof.
+	if index < len(t.data) && bytes.Equal(t.data[index], username) {
+		return nil, errors.New("cannot generate non-inclusion proof for an existing item")
+	}
+
+	// Handle the case of an empty tree.
+	if len(t.data) == 0 {
+		return &NonInclusionProof{}, nil
+	}
+
+	proof := &NonInclusionProof{}
+	var err error
+
+	// A left neighbor exists if the insertion index is not 0.
+	if index > 0 {
+		proof.LeftData = t.data[index-1]
+		leftHash := CalculateHash(proof.LeftData)
+		proof.LeftProof, err = t.GenerateProof(leftHash)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate proof for left neighbor: %w", err)
+		}
+	}
+
+	// A right neighbor exists if the insertion index is not at the end of the slice.
+	if index < len(t.data) {
+		proof.RightData = t.data[index]
+		rightHash := CalculateHash(proof.RightData)
+		proof.RightProof, err = t.GenerateProof(rightHash)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate proof for right neighbor: %w", err)
+		}
+	}
+
+	return proof, nil
+}
+
+// VerifyNonInclusionProof verifies that a username does not exist in a tree with a given root hash.
+// It checks the validity of the neighboring proofs and confirms the username sorts between them.
+func VerifyNonInclusionProof(rootHash string, username []byte, proof *NonInclusionProof) bool {
+	// Case 1: The proof is for an empty tree.
+	if proof.LeftData == nil && proof.RightData == nil {
+		return true // Correctly proves non-inclusion in an empty set.
+	}
+
+	// Case 2: The username should be the first item in the list.
+	if proof.LeftData == nil {
+		rightHash := CalculateHash(proof.RightData)
+		if !VerifyProof(rootHash, rightHash, proof.RightProof) {
+			return false // The right neighbor's proof is invalid.
+		}
+		// Check if the username correctly sorts before its right neighbor.
+		return bytes.Compare(username, proof.RightData) < 0
+	}
+
+	// Case 3: The username should be the last item in the list.
+	if proof.RightData == nil {
+		leftHash := CalculateHash(proof.LeftData)
+		if !VerifyProof(rootHash, leftHash, proof.LeftProof) {
+			return false // The left neighbor's proof is invalid.
+		}
+		// Check if the username correctly sorts after its left neighbor.
+		return bytes.Compare(proof.LeftData, username) < 0
+	}
+
+	// Case 4: The username is between two existing items.
+	leftHash := CalculateHash(proof.LeftData)
+	if !VerifyProof(rootHash, leftHash, proof.LeftProof) {
+		return false // Left proof is invalid.
+	}
+
+	rightHash := CalculateHash(proof.RightData)
+	if !VerifyProof(rootHash, rightHash, proof.RightProof) {
+		return false // Right proof is invalid.
+	}
+
+	// Check if the username correctly sorts between its neighbors.
+	return bytes.Compare(proof.LeftData, username) < 0 && bytes.Compare(username, proof.RightData) < 0
 }

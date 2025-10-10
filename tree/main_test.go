@@ -168,6 +168,81 @@ func TestProofAndVerification(t *testing.T) {
 	})
 }
 
+// New test suite for non-inclusion proofs
+func TestNonInclusionProof(t *testing.T) {
+	// Use a sparse set of data to make testing neighbors easier
+	data := [][]byte{[]byte("B"), []byte("D"), []byte("F"), []byte("H")}
+	mtree, _ := Build(data, false)
+	rootHash := mtree.Root.Hash
+
+	t.Run("ErrorOnExistingItem", func(t *testing.T) {
+		_, err := mtree.GenerateNonInclusionProof([]byte("D"))
+		if err == nil {
+			t.Fatal("Expected error generating non-inclusion proof for existing item")
+		}
+	})
+
+	t.Run("VerifyItemInMiddle", func(t *testing.T) {
+		// Prove that "C" is not in the tree
+		proof, err := mtree.GenerateNonInclusionProof([]byte("C"))
+		if err != nil {
+			t.Fatalf("Error generating non-inclusion proof for 'C': %v", err)
+		}
+		if !VerifyNonInclusionProof(rootHash, []byte("C"), proof) {
+			t.Error("Non-inclusion proof for 'C' failed verification")
+		}
+	})
+
+	t.Run("VerifyItemAtStart", func(t *testing.T) {
+		// Prove that "A" is not in the tree
+		proof, err := mtree.GenerateNonInclusionProof([]byte("A"))
+		if err != nil {
+			t.Fatalf("Error generating non-inclusion proof for 'A': %v", err)
+		}
+		if proof.LeftData != nil {
+			t.Error("Expected nil left neighbor for item at start")
+		}
+		if !VerifyNonInclusionProof(rootHash, []byte("A"), proof) {
+			t.Error("Non-inclusion proof for 'A' failed verification")
+		}
+	})
+
+	t.Run("VerifyItemAtEnd", func(t *testing.T) {
+		// Prove that "Z" is not in the tree
+		proof, err := mtree.GenerateNonInclusionProof([]byte("Z"))
+		if err != nil {
+			t.Fatalf("Error generating non-inclusion proof for 'Z': %v", err)
+		}
+		if proof.RightData != nil {
+			t.Error("Expected nil right neighbor for item at end")
+		}
+		if !VerifyNonInclusionProof(rootHash, []byte("Z"), proof) {
+			t.Error("Non-inclusion proof for 'Z' failed verification")
+		}
+	})
+
+	t.Run("VerifyOnEmptyTree", func(t *testing.T) {
+		emptyTree := MerkleTree{data: [][]byte{}} // Manually create to bypass Build error
+		proof, err := emptyTree.GenerateNonInclusionProof([]byte("A"))
+		if err != nil {
+			t.Fatalf("Error generating proof for empty tree: %v", err)
+		}
+		// A nil root hash would be conceptually correct for an empty tree
+		if !VerifyNonInclusionProof("", []byte("A"), proof) {
+			t.Error("Non-inclusion proof for empty tree failed")
+		}
+	})
+
+	t.Run("FailOnInvalidNeighborProof", func(t *testing.T) {
+		proof, _ := mtree.GenerateNonInclusionProof([]byte("C"))
+		// Tamper with the right neighbor's proof
+		proof.RightProof.Siblings[0] = CalculateHash([]byte("tampered"))
+		if VerifyNonInclusionProof(rootHash, []byte("C"), proof) {
+			t.Error("Verification should fail with a tampered neighbor proof")
+		}
+	})
+}
+
 func TestFindLeaf(t *testing.T) {
 	t.Run("NilNode", func(t *testing.T) {
 		_, err := findLeaf(nil, "somehash", nil)
