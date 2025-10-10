@@ -1,174 +1,342 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"os"
-	"os/runtime"
+	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
-	"user"
+
+	"github.com/ProjectApario/merkel/tree"
 )
 
 const (
-	APP     string = "merkel-cli"
-	VERSION string = "v0.0.1"
-
-	ParamFmt string = " -%s = '%s' \n"
-
-	argMerkelInput   string = "input"
-	argMerkelOutput  string = "output"
-	argHasMember     string = "has"
-	argNotMember     string = "not"
-	argAddMember     string = "add"
-	argRemoveMember  string = "rm"
-	argCalculateThis string = "hash"
-	argVerifyThis    string = "verify"
+	APP         string = "merkel-cli"
+	VERSION     string = "v0.0.1"
+	ParamFmt    string = " -%s = '%s' \n"
+	argInput    string = "input"
+	argOutput   string = "output"
+	argHas      string = "has"
+	argNot      string = "not"
+	argAdd      string = "add"
+	argRemove   string = "rm"
+	argHash     string = "hash"
+	argVerify   string = "verify"
 )
 
 var (
-	params          *Params = nil
+	params          *Params
 	paramInfo       map[string]string
 	defMerkelInput  string
 	defMerkelOutput string
 )
 
-type (
-	Yah    *user.User
-	Params struct {
-		InputPath  string
-		OutputPath string
+// Storage is a simple struct for JSON marshaling.
+// Data is base64 encoded to safely handle any []byte content.
+type Storage struct {
+	B64Data []string `json:"data"`
+}
 
-		HasMember         string
-		AddMember         string
-		NotMember         string
-		RemoveMember      string
-		CalculateThisHash string
-		VerifyThis        string
-	}
-)
+type Params struct {
+	InputPath   string
+	OutputPath  string
+	HasMember   string
+	AddMember   string
+	NotMember   string
+	RemoveMember string
+	CalculateThisHash string
+	VerifyThis  string
+}
 
 func init() {
 	paramInfo = make(map[string]string)
 	defMerkelInput = filepath.Join(".", "merkel.json")
 	defMerkelOutput = filepath.Join(".", "merkel.json")
-	paramInfo[argMerkelOutput] = "Path to (over)write the merkel.json payload after runtime"
-	paramInfo[argMerkelInput] = "Path to the merkel.json file"
-	paramInfo[argHasMember] = "Check if tree has member by value"
-	paramInfo[argAddMember] = "Add a new value to the tree"
-	paramInfo[argNotMember] = "Not a new value to the tree"
-	paramInfo[argRemoveMember] = "Remove a member from the tree"
-	paramInfo[argCalculateThis] = "Calculate value membership in tree"
-	paramInfo[argVerifyThis] = "Verify this hash is in the tree"
+
+	paramInfo[argOutput] = "Path to (over)write the merkel.json payload after runtime"
+	paramInfo[argInput] = "Path to the merkel.json file"
+	paramInfo[argHas] = "Check if tree has member by value"
+	paramInfo[argAdd] = "Add a new value to the tree"
+	paramInfo[argNot] = "Check if tree does NOT have member by value"
+	paramInfo[argRemove] = "Remove a member from the tree"
+	paramInfo[argHash] = "Calculate the SHA-256 hash of a raw string value"
+	paramInfo[argVerify] = "Verify this pre-computed hash is in the tree"
 }
 
 func main() {
+	// Use a logger for more informative error messages
+	log.SetFlags(0)
+
 	params = &Params{}
-	yah := Me()
-	flag.StringVar(&params.InputPath, argMerkelInput, defMerkelInput, paramInfo[argMerkelInput])
-	flag.StringVar(&params.OutputPath, argMerkelOutput, defMerkelOutput, paramInfo[argMerkelOutput])
-	flag.StringVar(&params.HasMember, argHasMember, "", paramInfo[argHasMember])
-	flag.StringVar(&params.NotMember, argNotdMember, "", paramInfo[argNotMember])
-	flag.StringVar(&params.AddMember, argAddMember, "", paramInfo[argAddMember])
-	flag.StringVar(&params.RemoveMember, argRemoveMember, "", paramInfo[argRemoveMember])
-	flag.StringVar(&params.CalculateThis, argCalculateThis, "", paramInfo[argCalculateThis])
-	flag.StringVar(&params.VerifyThis, argVerifyThis, "", paramInfo[argVerifyThis])
+	flag.StringVar(&params.InputPath, argInput, defMerkelInput, paramInfo[argInput])
+	flag.StringVar(&params.OutputPath, argOutput, defMerkelOutput, paramInfo[argOutput])
+	flag.StringVar(&params.HasMember, argHas, "", paramInfo[argHas])
+	flag.StringVar(&params.NotMember, argNot, "", paramInfo[argNot])
+	flag.StringVar(&params.AddMember, argAdd, "", paramInfo[argAdd])
+	flag.StringVar(&params.RemoveMember, argRemove, "", paramInfo[argRemove])
+	flag.StringVar(&params.CalculateThisHash, argHash, "", paramInfo[argHash])
+	flag.StringVar(&params.VerifyThis, argVerify, "", paramInfo[argVerify])
 	flag.Parse()
 
-	if err := verify(params); err != nil {
-		panic(err)
+	if err := verifyParams(params); err != nil {
+		log.Fatalf("Error: %v", err)
+	}
+
+	// Dispatch commands. Each command function will os.Exit.
+	if len(params.CalculateThisHash) > 0 {
+		runCalculation(params.CalculateThisHash)
 	}
 
 	if len(params.VerifyThis) > 0 {
-		if err := verification(params.VerifyThis); err != nil {
-			panic(err)
-		}
-	}
-
-	if len(params.CalculateThis) > 0 {
-		if err := calculation(params.CalculateThis); err != nil {
-			panic(err)
-		}
+		runVerification(params)
 	}
 
 	if len(params.RemoveMember) > 0 {
-		if err := process_removal(params); err != nil {
-			panic(err)
-		}
+		runRemoval(params)
 	}
 
 	if len(params.AddMember) > 0 {
-		if err := process_insertion(params); err != nil {
-			panic(err)
-		}
+		runInsertion(params)
 	}
 
 	if len(params.HasMember) > 0 {
-		if err := process_inclusion(params); err != nil {
-			panic(err)
-		}
+		runInclusion(params)
 	}
 
 	if len(params.NotMember) > 0 {
-		if err := process_exclusion(params); err != nil {
-			panic(err)
+		runExclusion(params)
+	}
+
+	fmt.Println("No action specified. Use -h for help.")
+	os.Exit(0)
+}
+
+// verifyParams ensures that only one action flag is provided at a time.
+func verifyParams(p *Params) error {
+	actionCount := 0
+	if p.HasMember != "" {
+		actionCount++
+	}
+	if p.NotMember != "" {
+		actionCount++
+	}
+	if p.AddMember != "" {
+		actionCount++
+	}
+	if p.RemoveMember != "" {
+		actionCount++
+	}
+	if p.VerifyThis != "" {
+		actionCount++
+	}
+	// Note: -hash is allowed to be combined with others.
+
+	if actionCount > 1 {
+		return errors.New("please specify only one action flag (-has, -not, -add, -rm, -verify) at a time")
+	}
+	return nil
+}
+
+// runCalculation calculates and prints the hash of a string.
+func runCalculation(input string) {
+	hash := tree.CalculateHash([]byte(input))
+	fmt.Fprintln(os.Stdout, hash)
+	os.Exit(0)
+}
+
+// runVerification checks if a pre-computed hash exists in the tree.
+func runVerification(p *Params) {
+	mtree, err := loadTree(p.InputPath)
+	if err != nil {
+		log.Fatalf("Error loading tree: %v", err)
+	}
+	_, err = mtree.GenerateProof(p.VerifyThis)
+	if err != nil {
+		fmt.Fprintln(os.Stdout, "false")
+		os.Exit(0)
+	}
+	fmt.Fprintln(os.Stdout, "true")
+	os.Exit(0)
+}
+
+// runRemoval removes a member and saves the new tree state.
+func runRemoval(p *Params) {
+	mtree, err := loadTree(p.InputPath)
+	if err != nil {
+		log.Fatalf("Error loading tree: %v", err)
+	}
+
+	target := []byte(p.RemoveMember)
+	var newData [][]byte
+	found := false
+	for _, item := range mtree.data {
+		if !bytes.Equal(item, target) {
+			newData = append(newData, item)
+		} else {
+			found = true
 		}
 	}
 
-	fmt.Println("Done!")
-	os.Exit(1)
+	if !found {
+		log.Fatalf("Error: member '%s' not found in tree", p.RemoveMember)
+	}
 
+	// Rebuild the tree from the filtered data. This is inefficient but functional.
+	newTree, err := tree.Build(newData, runtime.NumCPU() > 1)
+	if err != nil && err.Error() != "no data provided" {
+		log.Fatalf("Error rebuilding tree after removal: %v", err)
+	}
+
+	if err := saveTree(p.OutputPath, newTree); err != nil {
+		log.Fatalf("Error saving tree after removal: %v", err)
+	}
+
+	fmt.Fprintf(os.Stdout, "Successfully removed '%s'.\n", p.RemoveMember)
+	if newTree != nil {
+		fmt.Fprintf(os.Stdout, "New Merkle Root: %s\n", newTree.Root.Hash)
+	} else {
+		fmt.Fprintln(os.Stdout, "Tree is now empty.")
+	}
+
+	os.Exit(0)
 }
 
-func verify(params *Params) error {
-	// todo verify the input params
-	return nil
+// runInsertion adds a member and saves the new tree state.
+func runInsertion(p *Params) {
+	mtree, err := loadTree(p.InputPath)
+	if err != nil {
+		log.Fatalf("Error loading tree: %v", err)
+	}
+
+	if err := mtree.Append([]byte(p.AddMember), runtime.NumCPU() > 1); err != nil {
+		log.Fatalf("Error adding member: %v", err)
+	}
+
+	if err := saveTree(p.OutputPath, mtree); err != nil {
+		log.Fatalf("Error saving tree after insertion: %v", err)
+	}
+
+	fmt.Fprintf(os.Stdout, "Successfully added '%s'.\n", p.AddMember)
+	fmt.Fprintf(os.Stdout, "New Merkle Root: %s\n", mtree.Root.Hash)
+	os.Exit(0)
 }
 
-func verification(input string) error {
-	// TODO verification of the input string in the merkel tree
-	// write to STDOUT for success output and STDERR for errors and use os.Exit(0) for success and os.Exit(1) for errors
-	return nil
+// runInclusion checks if a member exists in the tree.
+func runInclusion(p *Params) {
+	mtree, err := loadTree(p.InputPath)
+	if err != nil {
+		log.Fatalf("Error loading tree: %v", err)
+	}
+	targetHash := tree.CalculateHash([]byte(p.HasMember))
+	proof, err := mtree.GenerateProof(targetHash)
+	if err != nil {
+		fmt.Fprintln(os.Stdout, "false")
+		os.Exit(0)
+	}
+	isValid := tree.VerifyProof(mtree.Root.Hash, targetHash, proof)
+	fmt.Fprintln(os.Stdout, isValid)
+	os.Exit(0)
 }
 
-func calculation(input string) error {
-	// TODO calculation of an input raw string into a hash value for the merkel tree
-	// write to STDOUT for success output and STDERR for errors and use os.Exit(0) for success and os.Exit(1) for errors
-	return nil
+// runExclusion checks if a member does NOT exist in the tree.
+func runExclusion(p *Params) {
+	mtree, err := loadTree(p.InputPath)
+	if err != nil {
+		log.Fatalf("Error loading tree: %v", err)
+	}
+	target := []byte(p.NotMember)
+	proof, err := mtree.GenerateNonInclusionProof(target)
+	if err != nil {
+		// This error means the item *does* exist, so non-inclusion is false.
+		fmt.Fprintln(os.Stdout, "false")
+		os.Exit(0)
+	}
+
+	isAvailable := tree.VerifyNonInclusionProof(mtree.Root.Hash, target, proof)
+	fmt.Fprintln(os.Stdout, isAvailable)
+	os.Exit(0)
 }
 
-func process_removal(params *Params) error {
-	// TODO remove the params.RemoveMember from the InputPath merkel tree and write to OutputPath
-	// write to STDOUT for success output and STDERR for errors and use os.Exit(0) for success and os.Exit(1) for errors
-	return nil
+// --- Helper Functions ---
+
+// loadTree reads the JSON file and builds a Merkle tree from it.
+// If the file does not exist, it returns an empty tree, ready for additions.
+func loadTree(path string) (*tree.MerkleTree, error) {
+	// If file doesn't exist, treat it as an empty tree.
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return &tree.MerkleTree{data: [][]byte{}}, nil
+	}
+
+	fileBytes, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("could not read file %s: %w", path, err)
+	}
+
+	var s Storage
+	if err := json.Unmarshal(fileBytes, &s); err != nil {
+		return nil, fmt.Errorf("could not parse JSON from %s: %w", path, err)
+	}
+
+	var data [][]byte
+	for _, b64 := range s.B64Data {
+		item, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid base64 data in file: %w", err)
+		}
+		data = append(data, item)
+	}
+
+	if len(data) == 0 {
+		return &tree.MerkleTree{data: [][]byte{}}, nil
+	}
+
+	return tree.Build(data, runtime.NumCPU() > 1)
 }
 
-func process_insertion(params *Params) error {
-	// TODO insert the params.AddMember to the InputPath merkel tree and write to OutputPath
-	// write to STDOUT for success output and STDERR for errors and use os.Exit(0) for success and os.Exit(1) for errors
-	return nil
+// saveTree writes the tree's data back to a JSON file.
+func saveTree(path string, mtree *tree.MerkleTree) error {
+	if mtree == nil || len(mtree.data) == 0 {
+		// Write an empty JSON object if the tree is empty
+		return os.WriteFile(path, []byte(`{"data":[]}`), 0644)
+	}
+
+	s := Storage{B64Data: make([]string, len(mtree.data))}
+	for i, item := range mtree.data {
+		s.B64Data[i] = base64.StdEncoding.EncodeToString(item)
+	}
+
+	// Marshal with indentation for human readability
+	jsonData, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return fmt.Errorf("could not marshal tree data to JSON: %w", err)
+	}
+
+	return os.WriteFile(path, jsonData, 0644)
 }
 
-func process_exclusion(params *Params) error {
-	// TODO run the non-inclusion check on params.NotMember in the InputPath and write the result to OutputPath
-	// write to STDOUT for success output and STDERR for errors and use os.Exit(0) for success and os.Exit(1) for errors
-	return nil
-}
-
+// NOTE: These functions are from your skeleton and are not used by the core logic,
+// but are kept for completeness.
 func (p Params) String() string {
 	var out strings.Builder
-	out.WriteString(fmt.Sprintf(ParamFmt, argMarkelInput, p.InputPath))
-	out.WriteString(fmt.Sprintf(ParamFmt, argMarkelOutput, p.OutputPath))
-	out.WriteString(fmt.Sprintf(ParamFmt, argHasMember, p.HasMember))
-	out.WriteString(fmt.Sprintf(ParamFmt, argNotMember, p.NotMember))
-	out.WriteString(fmt.Sprintf(ParamFmt, argAddMember, p.AddMember))
-	out.WriteString(fmt.Sprintf(ParamFmt, argRemoveMember, p.RemoveMember))
-	out.WriteString(fmt.Sprintf(ParamFmt, argCalculateThis, p.CalculateThis))
-	out.WriteString(fmt.Sprintf(ParamFmt, argVerifyThis, p.VerifyThis))
+	out.WriteString(fmt.Sprintf(ParamFmt, argInput, p.InputPath))
+	out.WriteString(fmt.Sprintf(ParamFmt, argOutput, p.OutputPath))
+	out.WriteString(fmt.Sprintf(ParamFmt, argHas, p.HasMember))
+	out.WriteString(fmt.Sprintf(ParamFmt, argNot, p.NotMember))
+	out.WriteString(fmt.Sprintf(ParamFmt, argAdd, p.AddMember))
+	out.WriteString(fmt.Sprintf(ParamFmt, argRemove, p.RemoveMember))
+	out.WriteString(fmt.Sprintf(ParamFmt, argHash, p.CalculateThisHash))
+	out.WriteString(fmt.Sprintf(ParamFmt, argVerify, p.VerifyThis))
 	return out.String()
 }
 
-func Me() Yah {
+func Me() *user.User {
 	currentUser, err := user.Current()
 	if err != nil {
 		return &user.User{
