@@ -45,14 +45,14 @@ type Storage struct {
 }
 
 type Params struct {
-	InputPath   string
-	OutputPath  string
-	HasMember   string
-	AddMember   string
-	NotMember   string
-	RemoveMember string
+	InputPath         string
+	OutputPath        string
+	HasMember         string
+	AddMember         string
+	NotMember         string
+	RemoveMember      string
 	CalculateThisHash string
-	VerifyThis  string
+	VerifyThis        string
 }
 
 func init() {
@@ -176,7 +176,7 @@ func runRemoval(p *Params) {
 	target := []byte(p.RemoveMember)
 	var newData [][]byte
 	found := false
-	for _, item := range mtree.data {
+	for _, item := range mtree.Data() {
 		if !bytes.Equal(item, target) {
 			newData = append(newData, item)
 		} else {
@@ -188,10 +188,16 @@ func runRemoval(p *Params) {
 		log.Fatalf("Error: member '%s' not found in tree", p.RemoveMember)
 	}
 
-	// Rebuild the tree from the filtered data. This is inefficient but functional.
-	newTree, err := tree.Build(newData, runtime.NumCPU() > 1)
-	if err != nil && err.Error() != "no data provided" {
-		log.Fatalf("Error rebuilding tree after removal: %v", err)
+	// Rebuild the tree from the filtered data.
+	var newTree *tree.MerkleTree
+	if len(newData) > 0 {
+		newTree, err = tree.Build(newData, runtime.NumCPU() > 1)
+		if err != nil {
+			log.Fatalf("Error rebuilding tree after removal: %v", err)
+		}
+	} else {
+		// If all items were removed, create a new empty tree.
+		newTree = tree.NewEmpty()
 	}
 
 	if err := saveTree(p.OutputPath, newTree); err != nil {
@@ -199,7 +205,7 @@ func runRemoval(p *Params) {
 	}
 
 	fmt.Fprintf(os.Stdout, "Successfully removed '%s'.\n", p.RemoveMember)
-	if newTree != nil {
+	if newTree != nil && newTree.Root != nil {
 		fmt.Fprintf(os.Stdout, "New Merkle Root: %s\n", newTree.Root.Hash)
 	} else {
 		fmt.Fprintln(os.Stdout, "Tree is now empty.")
@@ -269,14 +275,17 @@ func runExclusion(p *Params) {
 // loadTree reads the JSON file and builds a Merkle tree from it.
 // If the file does not exist, it returns an empty tree, ready for additions.
 func loadTree(path string) (*tree.MerkleTree, error) {
-	// If file doesn't exist, treat it as an empty tree.
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return &tree.MerkleTree{data: [][]byte{}}, nil
+		return tree.NewEmpty(), nil
 	}
 
 	fileBytes, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("could not read file %s: %w", path, err)
+	}
+
+	if len(fileBytes) == 0 {
+		return tree.NewEmpty(), nil
 	}
 
 	var s Storage
@@ -294,7 +303,7 @@ func loadTree(path string) (*tree.MerkleTree, error) {
 	}
 
 	if len(data) == 0 {
-		return &tree.MerkleTree{data: [][]byte{}}, nil
+		return tree.NewEmpty(), nil
 	}
 
 	return tree.Build(data, runtime.NumCPU() > 1)
@@ -302,17 +311,15 @@ func loadTree(path string) (*tree.MerkleTree, error) {
 
 // saveTree writes the tree's data back to a JSON file.
 func saveTree(path string, mtree *tree.MerkleTree) error {
-	if mtree == nil || len(mtree.data) == 0 {
-		// Write an empty JSON object if the tree is empty
+	if mtree == nil || len(mtree.Data()) == 0 {
 		return os.WriteFile(path, []byte(`{"data":[]}`), 0644)
 	}
 
-	s := Storage{B64Data: make([]string, len(mtree.data))}
-	for i, item := range mtree.data {
+	s := Storage{B64Data: make([]string, len(mtree.Data()))}
+	for i, item := range mtree.Data() {
 		s.B64Data[i] = base64.StdEncoding.EncodeToString(item)
 	}
 
-	// Marshal with indentation for human readability
 	jsonData, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("could not marshal tree data to JSON: %w", err)
