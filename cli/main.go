@@ -29,6 +29,7 @@ const (
 	argRemove   string = "rm"
 	argHash     string = "hash"
 	argVerify   string = "verify"
+	argPrint    string = "print"
 )
 
 var (
@@ -53,6 +54,7 @@ type Params struct {
 	RemoveMember      string
 	CalculateThisHash string
 	VerifyThis        string
+	Print             bool
 }
 
 func init() {
@@ -68,6 +70,7 @@ func init() {
 	paramInfo[argRemove] = "Remove a member from the tree"
 	paramInfo[argHash] = "Calculate the SHA-256 hash of a raw string value"
 	paramInfo[argVerify] = "Verify this pre-computed hash is in the tree"
+	paramInfo[argPrint] = "Print the Merkel Tree"
 }
 
 func main() {
@@ -83,6 +86,7 @@ func main() {
 	flag.StringVar(&params.RemoveMember, argRemove, "", paramInfo[argRemove])
 	flag.StringVar(&params.CalculateThisHash, argHash, "", paramInfo[argHash])
 	flag.StringVar(&params.VerifyThis, argVerify, "", paramInfo[argVerify])
+	flag.BoolVar(&params.Print, argPrint, false, paramInfo[argPrint])
 	flag.Parse()
 
 	if err := verifyParams(params); err != nil {
@@ -114,7 +118,20 @@ func main() {
 		runExclusion(params)
 	}
 
+	if params.Print {
+		runPrint(params)
+	}
+
 	fmt.Println("No action specified. Use -h for help.")
+	os.Exit(0)
+}
+
+func runPrint(p *Params) {
+	mtree, err := loadTree(p.InputPath)
+	if err != nil {
+		log.Fatalf("Error loading tree: %v", err)
+	}
+	mtree.Print()
 	os.Exit(0)
 }
 
@@ -328,8 +345,6 @@ func saveTree(path string, mtree *tree.MerkleTree) error {
 	return os.WriteFile(path, jsonData, 0644)
 }
 
-// NOTE: These functions are from your skeleton and are not used by the core logic,
-// but are kept for completeness.
 func (p Params) String() string {
 	var out strings.Builder
 	out.WriteString(fmt.Sprintf(ParamFmt, argInput, p.InputPath))
@@ -343,7 +358,9 @@ func (p Params) String() string {
 	return out.String()
 }
 
-func Me() *user.User {
+type jah *user.User
+
+func Me() jah {
 	currentUser, err := user.Current()
 	if err != nil {
 		return &user.User{
