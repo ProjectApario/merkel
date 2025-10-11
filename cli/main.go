@@ -41,8 +41,10 @@ var (
 
 // Storage is a simple struct for JSON marshaling.
 // Data is base64 encoded to safely handle any []byte content.
+// Root is the computed Merkle root hash for integrity verification.
 type Storage struct {
 	B64Data []string `json:"data"`
+	Root    string   `json:"root,omitempty"` // Stored root hash for tamper detection
 }
 
 type Params struct {
@@ -291,6 +293,7 @@ func runExclusion(p *Params) {
 
 // loadTree reads the JSON file and builds a Merkle tree from it.
 // If the file does not exist, it returns an empty tree, ready for additions.
+// Verifies the stored root hash matches the computed one for integrity.
 func loadTree(path string) (*tree.MerkleTree, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return tree.NewEmpty(), nil
@@ -320,21 +323,32 @@ func loadTree(path string) (*tree.MerkleTree, error) {
 	}
 
 	if len(data) == 0 {
+		if s.Root != "" {
+			return nil, errors.New("integrity check failed: empty data but non-empty root stored")
+		}
 		return tree.NewEmpty(), nil
 	}
 
-	return tree.Build(data, runtime.NumCPU() > 1)
-}
-
-// saveTree writes the tree's data back to a JSON file.
-func saveTree(path string, mtree *tree.MerkleTree) error {
-	if mtree == nil || len(mtree.Data()) == 0 {
-		return os.WriteFile(path, []byte(`{"data":[]}`), 0644)
+	mtree, err := tree.Build(data, runtime.NumCPU() > 1)
+	if err != nil {
+		return nil, err
 	}
 
+	if mtree.Root.Hash != s.Root {
+		return nil, errors.New("integrity check failed: computed root does not match stored root (possible tampering)")
+	}
+
+	return mtree, nil
+}
+
+// saveTree writes the tree's data back to a JSON file, including the root hash for integrity.
+func saveTree(path string, mtree *tree.MerkleTree) error {
 	s := Storage{B64Data: make([]string, len(mtree.Data()))}
 	for i, item := range mtree.Data() {
 		s.B64Data[i] = base64.StdEncoding.EncodeToString(item)
+	}
+	if mtree.Root != nil {
+		s.Root = mtree.Root.Hash
 	}
 
 	jsonData, err := json.MarshalIndent(s, "", "  ")
