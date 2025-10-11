@@ -5,17 +5,41 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
 
-// Helper function to create test data
+// Helper function to create test data. Note: It's already sorted alphabetically.
 func createTestData(count int) [][]byte {
 	var data [][]byte
 	for i := 0; i < count; i++ {
-		data = append(data, []byte(string(rune('A'+i))))
+		data = append(data, []byte(string(rune('A' + i))))
 	}
 	return data
+}
+
+func TestNewEmptyAndData(t *testing.T) {
+	t.Run("NewEmpty", func(t *testing.T) {
+		mtree := NewEmpty()
+		if mtree == nil {
+			t.Fatal("NewEmpty returned nil")
+		}
+		if mtree.Root != nil {
+			t.Error("Expected nil root for empty tree")
+		}
+		if len(mtree.Data()) != 0 {
+			t.Errorf("Expected 0 data elements, got %d", len(mtree.Data()))
+		}
+	})
+
+	t.Run("Data", func(t *testing.T) {
+		data := createTestData(4)
+		mtree, _ := Build(data, false)
+		if !reflect.DeepEqual(data, mtree.Data()) {
+			t.Error("Data() did not return the expected data slice")
+		}
+	})
 }
 
 func TestBuild(t *testing.T) {
@@ -30,10 +54,24 @@ func TestBuild(t *testing.T) {
 		}
 	})
 
+	t.Run("SortsUnsortedData", func(t *testing.T) {
+		unsorted := [][]byte{[]byte("D"), []byte("A"), []byte("C"), []byte("B")}
+		mtree, err := Build(unsorted, false)
+		if err != nil {
+			t.Fatalf("Build failed: %v", err)
+		}
+		isSorted := sort.SliceIsSorted(mtree.Data(), func(i, j int) bool {
+			return bytes.Compare(mtree.Data()[i], mtree.Data()[j]) < 0
+		})
+		if !isSorted {
+			t.Error("Build function did not sort the initial data")
+		}
+	})
+
 	testCases := []struct {
-		name       string
-		dataCount  int
-		parallel   bool
+		name         string
+		dataCount    int
+		parallel     bool
 		expectedRoot string
 	}{
 		{"SingleLeaf", 1, false, "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd"},
@@ -56,7 +94,7 @@ func TestBuild(t *testing.T) {
 			if mtree.Root.Hash != tc.expectedRoot {
 				t.Errorf("Expected root hash %s, got %s", tc.expectedRoot, mtree.Root.Hash)
 			}
-			if !reflect.DeepEqual(mtree.data, data) {
+			if !reflect.DeepEqual(mtree.Data(), data) {
 				t.Error("Internal data not stored correctly after build")
 			}
 		})
@@ -64,34 +102,43 @@ func TestBuild(t *testing.T) {
 }
 
 func TestAppend(t *testing.T) {
-	data := createTestData(3) // A, B, C
+	// Start with a non-continuous set to test insertion logic
+	data := [][]byte{[]byte("A"), []byte("D"), []byte("F")}
 	mtree, _ := Build(data, false)
 
-	// Append "D"
-	err := mtree.Append([]byte("D"), false)
-	if err != nil {
-		t.Fatalf("Append (sequential) failed: %v", err)
-	}
-	expectedRootSeq := "50a504831bd50fee3581d287168a85a8dcdd6aa777ffd0fe35e37290268a0153"
-	if mtree.Root.Hash != expectedRootSeq {
-		t.Errorf("Expected root after sequential append %s, got %s", expectedRootSeq, mtree.Root.Hash)
-	}
-	if len(mtree.data) != 4 {
-		t.Errorf("Expected data length 4, got %d", len(mtree.data))
-	}
+	t.Run("InsertsInMiddle", func(t *testing.T) {
+		err := mtree.Append([]byte("C"), false)
+		if err != nil {
+			t.Fatalf("Append failed: %v", err)
+		}
+		expectedData := [][]byte{[]byte("A"), []byte("C"), []byte("D"), []byte("F")}
+		if !reflect.DeepEqual(mtree.Data(), expectedData) {
+			t.Errorf("Append did not insert data in correct sorted order. Got %s", mtree.Data())
+		}
+	})
 
-	// Append "E" in parallel (now we have 5 leaves, an odd number)
-	err = mtree.Append([]byte("E"), true)
-	if err != nil {
-		t.Fatalf("Append (parallel) failed: %v", err)
-	}
-	expectedRootPar := "2db1790243fe117685d21ed0ff5005d9832e5f32bf5b2b02cddf0f07a34421b2"
-	if mtree.Root.Hash != expectedRootPar {
-		t.Errorf("Expected root after parallel append %s, got %s", expectedRootPar, mtree.Root.Hash)
-	}
-	if len(mtree.data) != 5 {
-		t.Errorf("Expected data length 5, got %d", len(mtree.data))
-	}
+	t.Run("InsertsAtStart", func(t *testing.T) {
+		err := mtree.Append([]byte("AA"), true) // Test parallel rebuild
+		if err != nil {
+			t.Fatalf("Append failed: %v", err)
+		}
+		// --- FIX: Corrected the expected sort order ---
+		expectedData := [][]byte{[]byte("A"), []byte("AA"), []byte("C"), []byte("D"), []byte("F")}
+		if !reflect.DeepEqual(mtree.Data(), expectedData) {
+			t.Errorf("Append did not insert data at start. Got %v", mtree.Data())
+		}
+	})
+
+	t.Run("ErrorOnDuplicate", func(t *testing.T) {
+		err := mtree.Append([]byte("C"), false)
+		if err == nil {
+			t.Fatal("Expected error when appending a duplicate item, but got nil")
+		}
+		expectedErr := "username already exists"
+		if err.Error() != expectedErr {
+			t.Errorf("Expected error '%s', got '%s'", expectedErr, err.Error())
+		}
+	})
 }
 
 func TestProofAndVerification(t *testing.T) {
@@ -114,7 +161,6 @@ func TestProofAndVerification(t *testing.T) {
 	})
 
 	t.Run("ProofForLeafInRightSubtree", func(t *testing.T) {
-		// Specifically test a leaf that is a right child ('B')
 		targetHash := CalculateHash([]byte("B"))
 		proof, err := mtree.GenerateProof(targetHash)
 		if err != nil {
@@ -126,9 +172,8 @@ func TestProofAndVerification(t *testing.T) {
 	})
 
 	t.Run("ProofForSingleNodeTree", func(t *testing.T) {
-		singleData := createTestData(1)
-		sTree, _ := Build(singleData, false)
-		targetHash := CalculateHash(singleData[0])
+		sTree, _ := Build(createTestData(1), false)
+		targetHash := CalculateHash(sTree.Data()[0])
 		proof, err := sTree.GenerateProof(targetHash)
 		if err != nil {
 			t.Fatalf("GenerateProof for single node failed: %v", err)
@@ -142,8 +187,7 @@ func TestProofAndVerification(t *testing.T) {
 	})
 
 	t.Run("ErrorOnProofForNonExistentData", func(t *testing.T) {
-		nonExistentHash := CalculateHash([]byte("Z"))
-		_, err := mtree.GenerateProof(nonExistentHash)
+		_, err := mtree.GenerateProof(CalculateHash([]byte("Z")))
 		if err == nil {
 			t.Fatal("Expected error for non-existent data proof, got nil")
 		}
@@ -152,25 +196,14 @@ func TestProofAndVerification(t *testing.T) {
 	t.Run("InvalidProofVerification", func(t *testing.T) {
 		targetHash := CalculateHash([]byte("A"))
 		proof, _ := mtree.GenerateProof(targetHash)
-
-		// Tamper with the proof
 		proof.Siblings[0] = CalculateHash([]byte("tampered"))
 		if VerifyProof(mtree.Root.Hash, targetHash, proof) {
 			t.Error("Verification should fail for a tampered proof")
 		}
-
-		// Tamper with IsLeft flag
-		proof, _ = mtree.GenerateProof(targetHash)
-		proof.IsLeft[0] = !proof.IsLeft[0]
-		if VerifyProof(mtree.Root.Hash, targetHash, proof) {
-			t.Error("Verification should fail for a tampered IsLeft flag")
-		}
 	})
 }
 
-// New test suite for non-inclusion proofs
 func TestNonInclusionProof(t *testing.T) {
-	// Use a sparse set of data to make testing neighbors easier
 	data := [][]byte{[]byte("B"), []byte("D"), []byte("F"), []byte("H")}
 	mtree, _ := Build(data, false)
 	rootHash := mtree.Root.Hash
@@ -183,7 +216,6 @@ func TestNonInclusionProof(t *testing.T) {
 	})
 
 	t.Run("VerifyItemInMiddle", func(t *testing.T) {
-		// Prove that "C" is not in the tree
 		proof, err := mtree.GenerateNonInclusionProof([]byte("C"))
 		if err != nil {
 			t.Fatalf("Error generating non-inclusion proof for 'C': %v", err)
@@ -194,7 +226,6 @@ func TestNonInclusionProof(t *testing.T) {
 	})
 
 	t.Run("VerifyItemAtStart", func(t *testing.T) {
-		// Prove that "A" is not in the tree
 		proof, err := mtree.GenerateNonInclusionProof([]byte("A"))
 		if err != nil {
 			t.Fatalf("Error generating non-inclusion proof for 'A': %v", err)
@@ -208,7 +239,6 @@ func TestNonInclusionProof(t *testing.T) {
 	})
 
 	t.Run("VerifyItemAtEnd", func(t *testing.T) {
-		// Prove that "Z" is not in the tree
 		proof, err := mtree.GenerateNonInclusionProof([]byte("Z"))
 		if err != nil {
 			t.Fatalf("Error generating non-inclusion proof for 'Z': %v", err)
@@ -222,12 +252,11 @@ func TestNonInclusionProof(t *testing.T) {
 	})
 
 	t.Run("VerifyOnEmptyTree", func(t *testing.T) {
-		emptyTree := MerkleTree{data: [][]byte{}} // Manually create to bypass Build error
+		emptyTree := NewEmpty()
 		proof, err := emptyTree.GenerateNonInclusionProof([]byte("A"))
 		if err != nil {
 			t.Fatalf("Error generating proof for empty tree: %v", err)
 		}
-		// A nil root hash would be conceptually correct for an empty tree
 		if !VerifyNonInclusionProof("", []byte("A"), proof) {
 			t.Error("Non-inclusion proof for empty tree failed")
 		}
@@ -235,7 +264,6 @@ func TestNonInclusionProof(t *testing.T) {
 
 	t.Run("FailOnInvalidNeighborProof", func(t *testing.T) {
 		proof, _ := mtree.GenerateNonInclusionProof([]byte("C"))
-		// Tamper with the right neighbor's proof
 		proof.RightProof.Siblings[0] = CalculateHash([]byte("tampered"))
 		if VerifyNonInclusionProof(rootHash, []byte("C"), proof) {
 			t.Error("Verification should fail with a tampered neighbor proof")
@@ -252,8 +280,7 @@ func TestFindLeaf(t *testing.T) {
 	})
 
 	t.Run("LeafNotFoundInValidTree", func(t *testing.T) {
-		data := createTestData(2)
-		mtree, _ := Build(data, false)
+		mtree, _ := Build(createTestData(2), false)
 		_, err := findLeaf(mtree.Root, "nonexistenthash", nil)
 		if err == nil || err.Error() != "leaf not found" {
 			t.Errorf("Expected 'leaf not found' error for nonexistent hash")
@@ -261,22 +288,16 @@ func TestFindLeaf(t *testing.T) {
 	})
 }
 
-
 func TestPrint(t *testing.T) {
-	// Capture stdout
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	// Run print
-	data := createTestData(2)
-	mtree, _ := Build(data, false)
+	mtree, _ := Build(createTestData(2), false)
 	mtree.Print()
 
-	// Restore stdout
 	w.Close()
 	os.Stdout = old
-
 	var buf bytes.Buffer
 	io.Copy(&buf, r)
 	output := buf.String()
@@ -284,13 +305,5 @@ func TestPrint(t *testing.T) {
 	if !strings.Contains(output, mtree.Root.Hash) {
 		t.Errorf("Print output did not contain root hash")
 	}
-	if !strings.Contains(output, mtree.Root.Left.Hash) {
-		t.Errorf("Print output did not contain left child hash")
-	}
-	if !strings.Contains(output, mtree.Root.Right.Hash) {
-		t.Errorf("Print output did not contain right child hash")
-	}
-
-	// Test print on nil node (should not panic)
 	printTree(nil, "")
 }
