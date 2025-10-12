@@ -30,6 +30,7 @@ const (
 	argHash     string = "hash"
 	argVerify   string = "verify"
 	argPrint    string = "print"
+	argProof    string = "proof"
 )
 
 var (
@@ -56,6 +57,7 @@ type Params struct {
 	RemoveMember      string
 	CalculateThisHash string
 	VerifyThis        string
+	Proof             string
 	Print             bool
 }
 
@@ -73,6 +75,7 @@ func init() {
 	paramInfo[argHash] = "Calculate the SHA-256 hash of a raw string value"
 	paramInfo[argVerify] = "Verify this pre-computed hash is in the tree"
 	paramInfo[argPrint] = "Print the Merkel Tree"
+	paramInfo[argProof] = "Render proof for value"
 }
 
 func main() {
@@ -88,6 +91,7 @@ func main() {
 	flag.StringVar(&params.RemoveMember, argRemove, "", paramInfo[argRemove])
 	flag.StringVar(&params.CalculateThisHash, argHash, "", paramInfo[argHash])
 	flag.StringVar(&params.VerifyThis, argVerify, "", paramInfo[argVerify])
+	flag.StringVar(&params.Proof, argProof, "", paramInfo[argProof])
 	flag.BoolVar(&params.Print, argPrint, false, paramInfo[argPrint])
 	flag.Parse()
 
@@ -103,6 +107,10 @@ func main() {
 	if len(params.VerifyThis) > 0 {
 		runVerification(params)
 	}
+
+	if len(params.Proof) > 0 {
+        runProof(params)
+    }
 
 	if len(params.RemoveMember) > 0 {
 		runRemoval(params)
@@ -135,6 +143,30 @@ func runPrint(p *Params) {
 	}
 	mtree.Print()
 	os.Exit(0)
+}
+
+func runProof(p *Params) {
+    mtree, err := loadTree(p.InputPath)
+    if err != nil {
+        log.Fatalf("Error loading tree: %v", err)
+    }
+    target := []byte(p.Proof)
+    // Try inclusion proof first
+    targetHash := tree.CalculateHash(target)
+    proof, err := mtree.GenerateProof(targetHash)
+    if err == nil {
+        jsonData, _ := json.MarshalIndent(proof, "", "  ")
+        fmt.Fprintln(os.Stdout, string(jsonData))
+        os.Exit(0)
+    }
+    // Fall back to non-inclusion proof
+    nonProof, err := mtree.GenerateNonInclusionProof(target)
+    if err != nil {
+        log.Fatalf("Error generating proof for %s: %v", p.Proof, err)
+    }
+    jsonData, _ := json.MarshalIndent(nonProof, "", "  ")
+    fmt.Fprintln(os.Stdout, string(jsonData))
+    os.Exit(0)
 }
 
 // verifyParams ensures that only one action flag is provided at a time.
