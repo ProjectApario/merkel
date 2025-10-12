@@ -228,31 +228,8 @@ func main() {
 	r.GET("/merkel.json", serveMerkelJSON)
 	r.GET("/merkel.pub", servePubKey)
 
-	// Start servers
-	if params.HTTP > 0 {
-		go func() {
-			log.Printf("HTTP server listening on %s:%d", params.Listener, params.HTTP)
-			if err := r.Run(fmt.Sprintf("%s:%d", params.Listener, params.HTTP)); err != nil {
-				log.Fatalf("HTTP server failed: %v", err)
-			}
-		}()
-	}
-
-	if params.HTTPS > 0 {
-		cert, key, err := loadTLSConfig()
-		if err != nil {
-			log.Fatalf("Error loading TLS: %v", err)
-		}
-		go func() {
-			log.Printf("HTTPS server listening on %s:%d", params.Listener, params.HTTPS)
-			if err := r.RunTLS(fmt.Sprintf("%s:%d", params.Listener, params.HTTPS), cert, key); err != nil {
-				log.Fatalf("HTTPS server failed: %v", err)
-			}
-		}()
-	}
-
 	// Start HTTP Server
-	go func(r *gin.Engine) {
+	go func(r *gin.Engine, params *Params) {
 		server := &http.Server{
 			Addr:    fmt.Sprintf("%s:%d", params.Listener, params.HTTP),
 			Handler: r,
@@ -274,7 +251,7 @@ func main() {
 		}
 
 		log.Println("Server exiting properly")
-	}(r)
+	}(r, params)
 
 	// Start HTTPS Server
 	go func(r *gin.Engine, params *Params) {
