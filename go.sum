@@ -6,6 +6,10 @@ github.com/ProtonMail/go-mime v0.0.0-20230322103455-7d82a3887f2f h1:tCbYj7/299ek
 github.com/ProtonMail/go-mime v0.0.0-20230322103455-7d82a3887f2f/go.mod h1:gcr0kNtGBqin9zDW9GOHcVntrwnjrK+qdJ06mWYBybw=
 github.com/ProtonMail/gopenpgp/v2 v2.9.0 h1:ruLzBmwe4dR1hdnrsEJ/S7psSBmV15gFttFUPP/+/kE=
 github.com/ProtonMail/gopenpgp/v2 v2.9.0/go.mod h1:IldDyh9Hv1ZCCYatTuuEt1XZJ0OPjxLpTarDfglih7s=
+github.com/andreimerlescu/checkfs v1.0.4 h1:pRXZGW1sfe+yXyWNUxmPC2IiX5yT3vF1V5O8PXulnFc=
+github.com/andreimerlescu/checkfs v1.0.4/go.mod h1:ADaqjiRJf3gmyENLS3v9bJIaEH00IOeM48cXxVwy1JY=
+github.com/andreimerlescu/figtree/v2 v2.0.14 h1:pwDbHpfiAdSnaNnxyV2GpG1rG9cmGiHhjXOvBEoVj2w=
+github.com/andreimerlescu/figtree/v2 v2.0.14/go.mod h1:PymPGUzzP/UuxZ4mqC5JIrDZJIVcjZ3GMc/MC2GB6Ek=
 github.com/andreimerlescu/go-smartchan v0.0.2 h1:i0IjJZ7e36eQW/SuqFuP8iFKknAbAj7hp9wmGyV2zyI=
 github.com/andreimerlescu/go-smartchan v0.0.2/go.mod h1:hwMuEGpMkRSybT+GQ+dTKey32nTqaFJfXbv3UK++T5A=
 github.com/bytedance/sonic v1.14.0 h1:/OfKt8HFw0kh2rj8N0F6C/qPGRESq0BbaNZgcNXXzQQ=
@@ -33,6 +37,8 @@ github.com/gin-contrib/sse v1.1.0 h1:n0w2GMuUpWDVp7qSpvze6fAu9iRxJY4Hmj6AmBOU05w
 github.com/gin-contrib/sse v1.1.0/go.mod h1:hxRZ5gVpWMT7Z0B0gSNYqqsSCNIJMjzvm6fqCz9vjwM=
 github.com/gin-gonic/gin v1.11.0 h1:OW/6PLjyusp2PPXtyxKHU0RbX6I/l28FTdDlae5ueWk=
 github.com/gin-gonic/gin v1.11.0/go.mod h1:+iq/FyxlGzII0KHiBGjuNn4UNENUlKbGlNmc+W50Dls=
+github.com/go-ini/ini v1.67.0 h1:z6ZrTEZqSWOTyH2FlglNbNgARyHG8oLW9gMELqKr06A=
+github.com/go-ini/ini v1.67.0/go.mod h1:ByCAeIL28uOIIG0E3PJtZPDL8WnHpFKFOtgjp+3Ies8=
 github.com/go-playground/assert/v2 v2.2.0 h1:JvknZsQTYeFEAhQwI4qEt9cyV5ONwRHC+lYKSsYSR8s=
 github.com/go-playground/assert/v2 v2.2.0/go.mod h1:VDjEfimB/XKnb+ZQfWdccd7VUvScMdVu0Titje2rxJ4=
 github.com/go-playground/locales v0.14.1 h1:EWaQ/wswjilfKLTECiXz7Rh+3BjFhfDFKv/oXslEjJA=
