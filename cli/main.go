@@ -18,19 +18,19 @@ import (
 )
 
 const (
-	APP         string = "merkel-cli"
-	VERSION     string = "v0.0.1"
-	ParamFmt    string = " -%s = '%s' \n"
-	argInput    string = "input"
-	argOutput   string = "output"
-	argHas      string = "has"
-	argNot      string = "not"
-	argAdd      string = "add"
-	argRemove   string = "rm"
-	argHash     string = "hash"
-	argVerify   string = "verify"
-	argPrint    string = "print"
-	argProof    string = "proof"
+	APP       string = "merkel-cli"
+	VERSION   string = "v0.0.1"
+	ParamFmt  string = " -%s = '%s' \n"
+	argInput  string = "input"
+	argOutput string = "output"
+	argHas    string = "has"
+	argNot    string = "not"
+	argAdd    string = "add"
+	argRemove string = "rm"
+	argHash   string = "hash"
+	argVerify string = "verify"
+	argPrint  string = "print"
+	argProof  string = "proof"
 )
 
 var (
@@ -58,7 +58,7 @@ type Params struct {
 	CalculateThisHash string
 	VerifyThis        string
 	Proof             string
-	Print             bool
+	PrintThis         bool
 }
 
 func init() {
@@ -74,7 +74,7 @@ func init() {
 	paramInfo[argRemove] = "Remove a member from the tree"
 	paramInfo[argHash] = "Calculate the SHA-256 hash of a raw string value"
 	paramInfo[argVerify] = "Verify this pre-computed hash is in the tree"
-	paramInfo[argPrint] = "Print the Merkel Tree"
+	paramInfo[argPrint] = "PrintThis the Merkel Tree"
 	paramInfo[argProof] = "Render proof for value"
 }
 
@@ -92,7 +92,7 @@ func main() {
 	flag.StringVar(&params.CalculateThisHash, argHash, "", paramInfo[argHash])
 	flag.StringVar(&params.VerifyThis, argVerify, "", paramInfo[argVerify])
 	flag.StringVar(&params.Proof, argProof, "", paramInfo[argProof])
-	flag.BoolVar(&params.Print, argPrint, false, paramInfo[argPrint])
+	flag.BoolVar(&params.PrintThis, argPrint, false, paramInfo[argPrint])
 	flag.Parse()
 
 	if err := verifyParams(params); err != nil {
@@ -109,8 +109,8 @@ func main() {
 	}
 
 	if len(params.Proof) > 0 {
-        runProof(params)
-    }
+		runProof(params)
+	}
 
 	if len(params.RemoveMember) > 0 {
 		runRemoval(params)
@@ -128,7 +128,7 @@ func main() {
 		runExclusion(params)
 	}
 
-	if params.Print {
+	if params.PrintThis {
 		runPrint(params)
 	}
 
@@ -146,27 +146,27 @@ func runPrint(p *Params) {
 }
 
 func runProof(p *Params) {
-    mtree, err := loadTree(p.InputPath)
-    if err != nil {
-        log.Fatalf("Error loading tree: %v", err)
-    }
-    target := []byte(p.Proof)
-    // Try inclusion proof first
-    targetHash := tree.CalculateHash(target)
-    proof, err := mtree.GenerateProof(targetHash)
-    if err == nil {
-        jsonData, _ := json.MarshalIndent(proof, "", "  ")
-        fmt.Fprintln(os.Stdout, string(jsonData))
-        os.Exit(0)
-    }
-    // Fall back to non-inclusion proof
-    nonProof, err := mtree.GenerateNonInclusionProof(target)
-    if err != nil {
-        log.Fatalf("Error generating proof for %s: %v", p.Proof, err)
-    }
-    jsonData, _ := json.MarshalIndent(nonProof, "", "  ")
-    fmt.Fprintln(os.Stdout, string(jsonData))
-    os.Exit(0)
+	mtree, err := loadTree(p.InputPath)
+	if err != nil {
+		log.Fatalf("Error loading tree: %v", err)
+	}
+	target := []byte(p.Proof)
+	// Try inclusion proof first
+	targetHash := tree.CalculateHash(target)
+	proof, err := mtree.GenerateProof(targetHash)
+	if err == nil {
+		jsonData, _ := json.MarshalIndent(proof, "", "  ")
+		fmt.Fprintln(os.Stdout, string(jsonData))
+		os.Exit(0)
+	}
+	// Fall back to non-inclusion proof
+	nonProof, err := mtree.GenerateNonInclusionProof(target)
+	if err != nil {
+		log.Fatalf("Error generating proof for %s: %v", p.Proof, err)
+	}
+	jsonData, _ := json.MarshalIndent(nonProof, "", "  ")
+	fmt.Fprintln(os.Stdout, string(jsonData))
+	os.Exit(0)
 }
 
 // verifyParams ensures that only one action flag is provided at a time.
