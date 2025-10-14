@@ -14,7 +14,7 @@ import (
 func createTestData(count int) [][]byte {
 	var data [][]byte
 	for i := 0; i < count; i++ {
-		data = append(data, []byte(string(rune('A' + i))))
+		data = append(data, []byte(string(rune('A'+i))))
 	}
 	return data
 }
@@ -303,7 +303,7 @@ func TestPrint(t *testing.T) {
 	output := buf.String()
 
 	if !strings.Contains(output, mtree.Root.Hash) {
-		t.Errorf("Print output did not contain root hash")
+		t.Errorf("PrintThis output did not contain root hash")
 	}
 	printTree(nil, "")
 }
