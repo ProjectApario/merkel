@@ -3,25 +3,24 @@ package main
 import (
 	"context"
 	"crypto"
-	"crypto/ed25519"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"crypto/sha256"
-	"math/big"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -30,9 +29,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/andreimerlescu/go-smartchan"
 	"github.com/1password/onepassword-sdk-go"
+	twerkle_merkle "github.com/ProjectApario/merkel/src/twerkle-merkle"
 	gpgCrypto "github.com/ProtonMail/gopenpgp/v2/crypto"
+	"github.com/andreimerlescu/figtree/v2"
+	sch "github.com/andreimerlescu/go-smartchan"
 	"github.com/didip/tollbooth"
 	"github.com/didip/tollbooth/limiter"
 	"github.com/didip/tollbooth_gin"
@@ -47,7 +48,7 @@ const (
 	defListener     = "127.0.0.1"
 	defHTTP         = 8080
 	defHTTPS        = 8443
-	defDomain       = "localhost:8080"
+	defDomain       = "app.here.local"
 	defAccessLog    = "./merkel-server.access.log"
 	defErrorLog     = "./merkel-server.error.log"
 	defRateLimit    = 30
@@ -55,19 +56,31 @@ const (
 	defRateInterval = 30
 	defServeCached  = false
 	defCacheTTL     = "until-changed"
+	defTreePath     = ""
 )
 
 var (
-	ch_cert_reloader_cancel = go_smartchan.NewSmartChan(1)
+	ch_cert_reloader_cancel = sch.NewSmartChan(1)
 	loadedCert              tls.Certificate
 	mu_cert                 sync.RWMutex
 	ctx                     context.Context
 )
 
 const (
+	argTreePath                 string = "tree-path"
+	argDomain                   string = "domain"
 	argListener                 string = "listener"
 	argHTTP                     string = "http"
 	argHTTPS                    string = "https"
+	argAccessLog                string = "access-log"
+	argErrorLog                 string = "error-log"
+	argRateLimit                string = "rate-limit"
+	argRateInterval             string = "rate-interval"
+	argRateTTL                  string = "rate-ttl"
+	argSigningKey               string = "signing-key"
+	argSigningKeyPass           string = "signing-key-pass"
+	argServeCached              string = "serve-cached"
+	argCacheTTL                 string = "cache-ttl"
 	argCA                       string = "ca"
 	argCert                     string = "cert"
 	argKey                      string = "key"
@@ -78,19 +91,10 @@ const (
 	argSelfSignedSANIPList      string = "self-signed-san-ip-list"
 	argSelfSignedDomains        string = "self-signed-domains"
 	argSelfSignedCompany        string = "self-signed-company"
-	argDomain                   string = "domain"
-	argAccessLog                string = "access-log"
-	argErrorLog                 string = "error-log"
-	argRateLimit                string = "rate-limit"
-	argRateInterval             string = "rate-interval"
-	argRateTTL                  string = "rate-ttl"
-	argServeCached              string = "serve-cached"
-	argCacheTTL                 string = "cache-ttl"
-	argSigningKey               string = "signing-key"
-	argSigningKeyPass           string = "signing-key-pass"
 )
 
 type Params struct {
+	TreePath                 string
 	Listener                 string
 	HTTP                     int
 	HTTPS                    int
@@ -135,6 +139,7 @@ var (
 
 func populateInfo() {
 	paramInfo = map[string]string{
+		argTreePath:                 "Path to Merkle Tree JSON file (default: \"./merkel.json\")",
 		argListener:                 "Listener address (default: " + defListener + ")",
 		argHTTP:                     "HTTP port (default: " + fmt.Sprintf("%d", defHTTP) + ")",
 		argHTTPS:                    "HTTPS port (default: " + fmt.Sprintf("%d", defHTTPS) + ")",
@@ -161,45 +166,80 @@ func populateInfo() {
 	}
 }
 
-func init() {
+func main() {
+	populateInfo()
 	ctx = context.Background()
 	paramInfo = make(map[string]string)
 	params = &Params{}
 	opVaultIDs = make(map[string]string)
+	figOpts := figtree.Options{
+		Germinate:  true,
+		ConfigFile: "config.yaml",
+	}
+	figs := figtree.With(figOpts)
+	figs.NewString(argTreePath, defTreePath, paramInfo[argTreePath])
+	figs.NewString(argListener, defListener, paramInfo[argListener])
+	figs.NewInt(argHTTP, defHTTP, paramInfo[argHTTP])
+	figs.NewInt(argHTTPS, defHTTPS, paramInfo[argHTTPS])
+	figs.NewString(argCA, "", paramInfo[argCA])
+	figs.NewString(argCert, "", paramInfo[argCert])
+	figs.NewString(argKey, "", paramInfo[argKey])
+	figs.NewString(argKeyPass, "", paramInfo[argKeyPass])
+	figs.NewString(argDomain, defDomain, paramInfo[argDomain])
+	figs.NewString(argAccessLog, defAccessLog, paramInfo[argAccessLog])
+	figs.NewString(argErrorLog, defErrorLog, paramInfo[argErrorLog])
+	figs.NewInt(argRateLimit, defRateLimit, paramInfo[argRateLimit])
+	figs.NewInt(argRateInterval, defRateInterval, paramInfo[argRateInterval])
+	figs.NewInt(argRateTTL, defRateTTL, paramInfo[argRateTTL])
+	figs.NewBool(argServeCached, defServeCached, paramInfo[argServeCached])
+	figs.NewString(argCacheTTL, defCacheTTL, paramInfo[argCacheTTL])
+	figs.NewString(argSigningKey, "", paramInfo[argSigningKey])
+	figs.NewString(argSigningKeyPass, "", paramInfo[argSigningKeyPass])
+	figs.NewBool(argSelfSigned, false, paramInfo[argSelfSigned])
+	figs.NewInt(argSelfSignedReloadMinutes, 3600, paramInfo[argSelfSignedReloadMinutes])
+	figs.NewInt(argSelfSignedExpiresInHours, 168, paramInfo[argSelfSignedExpiresInHours])
+	figs.NewString(argSelfSignedSANIPList, "", paramInfo[argSelfSignedSANIPList])
+	figs.NewString(argSelfSignedDomains, "", paramInfo[argSelfSignedDomains])
+	figs.NewString(argSelfSignedCompany, "", paramInfo[argSelfSignedCompany])
+	err := figs.Load()
+	if err != nil {
+		log.Fatalf("Error loading config: %v", err)
+	}
 
-	flag.StringVar(&params.Listener, argListener, defListener, paramInfo[argListener])
-	flag.IntVar(&params.HTTP, argHTTP, defHTTP, paramInfo[argHTTP])
-	flag.IntVar(&params.HTTPS, argHTTPS, defHTTPS, paramInfo[argHTTPS])
-	flag.StringVar(&params.CA, argCA, "", paramInfo[argCA])
-	flag.StringVar(&params.Cert, argCert, "", paramInfo[argCert])
-	flag.StringVar(&params.Key, argKey, "", paramInfo[argKey])
-	flag.StringVar(&params.KeyPass, argKeyPass, "", paramInfo[argKeyPass])
-	flag.StringVar(&params.Domain, argDomain, defDomain, paramInfo[argDomain])
-	flag.StringVar(&params.AccessLog, argAccessLog, defAccessLog, paramInfo[argAccessLog])
-	flag.StringVar(&params.ErrorLog, argErrorLog, defErrorLog, paramInfo[argErrorLog])
-	flag.IntVar(&params.RateLimit, argRateLimit, defRateLimit, paramInfo[argRateLimit])
-	flag.IntVar(&params.RateTTL, argRateTTL, defRateTTL, paramInfo[argRateTTL])
-	flag.IntVar(&params.RateInterval, argRateInterval, defRateInterval, paramInfo[argRateInterval])
-	flag.BoolVar(&params.ServeCached, argServeCached, defServeCached, paramInfo[argServeCached])
-	flag.StringVar(&params.CacheTTL, argCacheTTL, defCacheTTL, paramInfo[argCacheTTL])
-	flag.StringVar(&params.SigningKey, argSigningKey, "", paramInfo[argSigningKey])
-	flag.StringVar(&params.SigningKeyPass, argSigningKeyPass, "", paramInfo[argSigningKeyPass])
-	flag.BoolVar(&params.SelfSigned, argSelfSigned, false, paramInfo[argSelfSigned])
-	flag.IntVar(&params.SelfSignedReloadMinutes, argSelfSignedReloadMinutes, 3600, paramInfo[argSelfSignedReloadMinutes])
-	flag.IntVar(&params.SelfSignedExpiresInHours, argSelfSignedExpiresInHours, 168, paramInfo[argSelfSignedExpiresInHours])
-	flag.StringVar(&params.SelfSignedSANIPList, argSelfSignedSANIPList, "", paramInfo[argSelfSignedSANIPList])
-	flag.StringVar(&params.SelfSignedDomains, argSelfSignedDomains, "", paramInfo[argSelfSignedDomains])
-	flag.StringVar(&params.SelfSignedCompany, argSelfSignedCompany, "", paramInfo[argSelfSignedCompany])
-}
-
-func main() {
-	flag.Parse()
+	params = &Params{
+		TreePath:                 *figs.String(argTreePath),
+		Listener:                 *figs.String(argListener),
+		HTTP:                     *figs.Int(argHTTP),
+		HTTPS:                    *figs.Int(argHTTPS),
+		CA:                       *figs.String(argCA),
+		Cert:                     *figs.String(argCert),
+		Key:                      *figs.String(argKey),
+		KeyPass:                  *figs.String(argKeyPass),
+		SelfSigned:               *figs.Bool(argSelfSigned),
+		SelfSignedReloadMinutes:  *figs.Int(argSelfSignedReloadMinutes),
+		SelfSignedExpiresInHours: *figs.Int(argSelfSignedExpiresInHours),
+		SelfSignedSANIPList:      *figs.String(argSelfSignedSANIPList),
+		SelfSignedDomains:        *figs.String(argSelfSignedDomains),
+		SelfSignedCompany:        *figs.String(argSelfSignedCompany),
+		Domain:                   *figs.String(argDomain),
+		AccessLog:                *figs.String(argAccessLog),
+		ErrorLog:                 *figs.String(argErrorLog),
+		RateLimit:                *figs.Int(argRateLimit),
+		RateTTL:                  *figs.Int(argRateTTL),
+		RateInterval:             *figs.Int(argRateInterval),
+		ServeCached:              *figs.Bool(argServeCached),
+		CacheTTL:                 *figs.String(argCacheTTL),
+		SigningKey:               *figs.String(argSigningKey),
+		SigningKeyPass:           *figs.String(argSigningKeyPass),
+	}
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	fmt.Println("Using Merkle-Twerkle To Print The Params")
+	fmt.Println(twerkle_merkle.PrintStructTable(*params))
+
 	// Initialize 1Password client
-	var err error
 	opClient, err = onepassword.NewClient(
 		context.Background(),
 		onepassword.WithServiceAccountToken(os.Getenv("OP_SERVICE_ACCOUNT_TOKEN")),
@@ -210,13 +250,13 @@ func main() {
 	}
 
 	// Load tree from local merkel.json
-	mtree, err = loadLocalTree("./merkel.json")
+	mtree, err = loadLocalTree(params.TreePath)
 	if err != nil {
 		log.Fatalf("Error loading tree: %v", err)
 	}
 
 	// Setup Gin
-	gin.SetMode(gin.ReleaseMode)
+	//gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
 	r.Use(tollbooth_gin.LimitHandler(tollbooth.NewLimiter(float64(params.RateLimit), &limiter.ExpirableOptions{
@@ -236,7 +276,8 @@ func main() {
 		}
 
 		go func() {
-			if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			err := server.ListenAndServe()
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Fatalf("listen: %s\n", err)
 			}
 		}()
@@ -266,7 +307,8 @@ func main() {
 		}
 
 		go func() {
-			if err := server.ListenAndServeTLS("", ""); !errors.Is(err, http.ErrServerClosed) {
+			err := server.ListenAndServeTLS("", "")
+			if !errors.Is(err, http.ErrServerClosed) {
 				log.Fatalf("ListenAndServeTLS(): %s", err)
 			}
 		}()
@@ -282,14 +324,8 @@ func main() {
 		log.Println("Server exiting properly")
 	}(r, params)
 
-	// Wait for the main context to be canceled
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		}
-	}
-
+	<-ctx.Done()
+	fmt.Println("Thank you for using Merkel Server by Project Apario!")
 }
 
 // loadLocalTree loads the Merkle tree from a local JSON file.
@@ -340,25 +376,22 @@ func loadLocalTree(path string) (*tree.MerkleTree, error) {
 	return mtree, nil
 }
 
-// rateLimitMiddleware limits requests per interval.
-func rateLimitMiddleware(limit int, interval time.Duration) gin.HandlerFunc {
-	// Simple in-memory limiter; use Redis for production
-	return func(c *gin.Context) {
-		c.Next()
-	}
-}
-
-// serveMerkelJSON serves the signed tree JSON, cached if enabled.
 func serveMerkelJSON(c *gin.Context) {
 	mu.RLock()
 	defer mu.RUnlock()
 
-	if params.ServeCached && lastRoot == mtree.Root.Hash {
-		// Serve cached
+	// Helper to get root hash safely
+	currentRoot := ""
+	if mtree.Root != nil {
+		currentRoot = mtree.Root.Hash
+	}
+
+	if params.ServeCached && lastRoot == currentRoot {
+		// Serve cached (e.g., from a pre-marshaled var, but for now, just proceed to prepare)
 	} else {
 		// Rebuild/sign if changed
 		signTree(mtree)
-		lastRoot = mtree.Root.Hash
+		lastRoot = currentRoot // Safe: "" if nil
 	}
 
 	storage := prepareStorage(mtree)
