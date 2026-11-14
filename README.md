@@ -1,5 +1,8 @@
 # Merkel Tree
 
+![Unique](https://counthis.app/github?repo=projectapario/writer&label=Unique)
+![Impressions](https://counthis.app/github?user=projectapario&label=Impressions)
+
 This is a Merkel Tree written in Go that can be used for many different technical applications.
 
 Project Apario will use the Merkel Tree for **Proof of Inclusion**.
